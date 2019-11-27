@@ -9,6 +9,7 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets, transforms, models
 from os.path import join as pjoin
+from datetime import datetime, timedelta
 
 from . import model
 from . import prepare
@@ -16,9 +17,13 @@ from cfg import settings
 from utils import flip
 
 
+pool_part = 4
+
+
 class PCBSolver:
-    def __init__(self, class_num):
-        self.model = model.PCBNet(class_num, 6)
+    def __init__(self, class_num, part=6):
+        self.part = part
+        self.model = model.PCBNet(class_num, 3)
         # self.model = models.resnet101(pretrained=True)
         # self.model.fc = nn.Linear(2048, class_num, bias=True)
         self.device = 'cuda:2' if torch.cuda.is_available() else 'cpu'
@@ -142,12 +147,12 @@ class PCBSolver:
                 xr = flip.flip_lr(xl)
                 fr = self.model.output_feature(xr)
                 feature = fl + fr
-                assert feature.shape[1:] == (2048, 6)
+                assert feature.shape[1:] == (2048, self.part)
 
                 # normalize features on each part
-                fnorm = torch.norm(feature, p=2, dim=1, keepdim=True) * np.sqrt(6)
+                fnorm = torch.norm(feature, p=2, dim=1, keepdim=True) * np.sqrt(self.part)
                 feature = feature.div(fnorm.expand_as(feature))
-                feature = feature.view(-1, 2048 * 6)
+                feature = feature.view(-1, 2048 * self.part)
                 features.append(feature)
         features = torch.cat(features, dim=0)
         return features
@@ -162,15 +167,15 @@ class PCBSolver:
             fr = self.model.output_feature(xr)
             feature = fl + fr
 
-            fnorm = torch.norm(feature, p=2, dim=1, keepdim=True) * np.sqrt(6)
+            fnorm = torch.norm(feature, p=2, dim=1, keepdim=True) * np.sqrt(self.part)
             feature = feature.div(fnorm.expand_as(feature))
-            feature = feature.view(-1, 2048 * 6)
+            feature = feature.view(-1, 2048 * self.part)
         return feature
 
 
 class PCBRPPSolver(PCBSolver):
-    def __init__(self, class_num):
-        super().__init__(class_num)
+    def __init__(self, class_num, part=6):
+        super().__init__(class_num, part)
         self.model.convert_to_rpp()
 
 
@@ -372,13 +377,13 @@ def train_pcb_rpp_masked():
                                       pjoin(settings.data_root, 'matched_group'), 'val',
                                       {'batch_size': batch_size, 'shuffle': True, 'num_workers': 16})
     classes = dataloader_train.get_class_names()
-    solver = PCBSolver(len(classes))
+    solver = PCBSolver(len(classes), part=pool_part)
 
     opt, scheduler = solver.make_opt(
-        main_lr=0.01, classifier_lr=0.1, rpp_lr=None, lr_decay=0.1, lr_decay_step=80, momentum=0.9, weight_decay=5e-4,
+        main_lr=0.01, classifier_lr=0.1, rpp_lr=None, lr_decay=0.1, lr_decay_step=40, momentum=0.9, weight_decay=5e-4,
         use_nesterov_momentum=True
     )
-    solver.train(dataloader_train, dataloader_val, opt=opt, lr_scheduler=scheduler, max_epochs=120,
+    solver.train(dataloader_train, dataloader_val, opt=opt, lr_scheduler=scheduler, max_epochs=60,
                  saved_path=pjoin(settings.root, 'pcb_rpp', 'trained', 'pcb.model'))
 
     solver.convert_to_rpp()
@@ -386,13 +391,13 @@ def train_pcb_rpp_masked():
         main_lr=None, classifier_lr=None, rpp_lr=0.01, lr_decay=0.1, lr_decay_step=100, momentum=0.9, weight_decay=5e-4,
         use_nesterov_momentum=True
     )
-    solver.train(dataloader_train, dataloader_val, opt=opt, lr_scheduler=scheduler, max_epochs=10,
+    solver.train(dataloader_train, dataloader_val, opt=opt, lr_scheduler=scheduler, max_epochs=5,
                  saved_path=pjoin(settings.root, 'pcb_rpp', 'trained', 'rpp.model'))
 
     opt, scheduler = solver.make_opt(
         main_lr=0.001, classifier_lr=0.01, rpp_lr=0.01, lr_decay=0.1, lr_decay_step=100, momentum=0.9,
         weight_decay=5e-4, use_nesterov_momentum=True)
-    solver.train(dataloader_train, dataloader_val, opt=opt, lr_scheduler=scheduler, max_epochs=20,
+    solver.train(dataloader_train, dataloader_val, opt=opt, lr_scheduler=scheduler, max_epochs=10,
                  saved_path=pjoin(settings.root, 'pcb_rpp', 'trained', 'pcb_rpp.model'))
 
 
@@ -447,7 +452,7 @@ def extract_features_masked():
                                         {'batch_size': batch_size, 'shuffle': False, 'num_workers': 16})
 
     saved_model = torch.load(pjoin(settings.root, 'pcb_rpp', 'trained', 'pcb_rpp.model'))
-    solver = PCBRPPSolver(class_num=saved_model['num_classes'])
+    solver = PCBRPPSolver(class_num=saved_model['num_classes'], part=pool_part)
     solver.load(saved_model['model_state_dict'])
 
     feature_gallery = solver.extract(dataloader_gallery).cpu().numpy()
@@ -602,3 +607,53 @@ def evaluate_daily():
 
     feature_gallery = solver.extract(dataloader_gallery).cpu().numpy()
     feature_query = solver.extract(dataloader_query).cpu().numpy()
+
+    # start_date = datetime(year=2019, month=7, day=1)
+    # end_date = datetime(year=2019, month=10, day=1)
+    # str_format = '%Y-%m-%d'
+    # delta = timedelta(days=1)
+
+    gallery_classnames = [item[1] for item in dataloader_gallery.get_img_paths()]
+    query_classnames = [item[1] for item in dataloader_query.get_img_paths()]
+
+    daily_features_gallery = {}
+    daily_features_query = {}
+    for i, classname in enumerate(gallery_classnames):
+        date_str = classname[:10]
+        if date_str not in daily_features_gallery:
+            daily_features_gallery[date_str] = [feature_gallery[i]]
+        else:
+            daily_features_gallery[date_str].append(feature_gallery[i])
+    for i, classname in enumerate(query_classnames):
+        date_str = classname[:10]
+        if date_str not in daily_features_query:
+            daily_features_query[date_str] = [feature_query[i]]
+        else:
+            daily_features_query[date_str].append(feature_query[i])
+
+    print(daily_features_query.keys())
+    for k in daily_features_gallery:
+        daily_features_gallery[k] = np.stack(daily_features_gallery[k], axis=0)
+    rank1_acc = {}
+    for key, items in daily_features_query.items():
+        correct = 0
+        for item in items:
+            pred_class = pred(daily_features_gallery, item)
+            if pred_class == key:
+                correct += 1
+        rank1_acc[key] = correct / len(items)
+    print(rank1_acc)
+    print(np.mean(rank1_acc.values()))
+
+
+def pred(gallery_dict, feature):
+    max_score = -1
+    predclass = None
+
+    for k, g_features in gallery_dict.items():
+        score = g_features @ feature
+        score = score.max()
+        if score > max_score:
+            max_score = score
+            predclass = k
+    return predclass

@@ -278,11 +278,11 @@ def train_resnet():
 
     batch_size = 64
 
-    # dataloader_train = MaskedDataloader(pjoin(settings.data_root, settings.prepared_market1501_name, 'train'),
-    #                                     pjoin(settings.data_root, 'matched_group'), 'train',
-    #                                     {'batch_size': batch_size, 'shuffle': False, 'num_workers': 16})
-    dataloader_train = MarketDataloader(pjoin(settings.data_root, settings.prepared_market1501_name, 'train'), 'train',
-                                        {'batch_size': batch_size, 'shuffle': True, 'num_workers': 16})
+    dataloader_train = MaskedDataloader(pjoin(settings.data_root, settings.prepared_market1501_name, 'train'),
+                                        pjoin(settings.data_root, 'matched_group'), 'train',
+                                        {'batch_size': batch_size, 'shuffle': False, 'num_workers': 16})
+    # dataloader_train = MarketDataloader(pjoin(settings.data_root, settings.prepared_market1501_name, 'train'), 'train',
+    #                                     {'batch_size': batch_size, 'shuffle': True, 'num_workers': 16})
     dataloader_val = MaskedDataloader(pjoin(settings.data_root, settings.prepared_market1501_name, 'val'),
                                       pjoin(settings.data_root, 'matched_group'), 'val',
                                       {'batch_size': batch_size, 'shuffle': False, 'num_workers': 16})
