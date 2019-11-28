@@ -23,7 +23,7 @@ pool_part = 4
 class PCBSolver:
     def __init__(self, class_num, part=6):
         self.part = part
-        self.model = model.PCBNet(class_num, 3)
+        self.model = model.PCBNet(class_num, part)
         # self.model = models.resnet101(pretrained=True)
         # self.model.fc = nn.Linear(2048, class_num, bias=True)
         self.device = 'cuda:2' if torch.cuda.is_available() else 'cpu'
@@ -602,7 +602,7 @@ def evaluate_daily():
                                         {'batch_size': batch_size, 'shuffle': False, 'num_workers': 16})
 
     saved_model = torch.load(pjoin(settings.root, 'pcb_rpp', 'trained', 'pcb_rpp.model'))
-    solver = PCBRPPSolver(class_num=saved_model['num_classes'])
+    solver = PCBRPPSolver(class_num=saved_model['num_classes'], part=pool_part)
     solver.load(saved_model['model_state_dict'])
 
     feature_gallery = solver.extract(dataloader_gallery).cpu().numpy()
@@ -620,30 +620,31 @@ def evaluate_daily():
     daily_features_query = {}
     for i, classname in enumerate(gallery_classnames):
         date_str = classname[:10]
-        if date_str not in daily_features_gallery:
-            daily_features_gallery[date_str] = [feature_gallery[i]]
+        if date_str not in daily_features_gallery or classname not in daily_features_gallery[date_str]:
+            daily_features_gallery[date_str] = {classname: [feature_gallery[i]]}
         else:
-            daily_features_gallery[date_str].append(feature_gallery[i])
+            daily_features_gallery[date_str][classname].append(feature_gallery[i])
     for i, classname in enumerate(query_classnames):
         date_str = classname[:10]
-        if date_str not in daily_features_query:
-            daily_features_query[date_str] = [feature_query[i]]
+        if date_str not in daily_features_query or classname not in daily_features_query[date_str]:
+            daily_features_query[date_str] = {classname: [feature_query[i]]}
         else:
-            daily_features_query[date_str].append(feature_query[i])
+            daily_features_query[date_str][classname].append(feature_query[i])
 
     print(daily_features_query.keys())
-    for k in daily_features_gallery:
-        daily_features_gallery[k] = np.stack(daily_features_gallery[k], axis=0)
+    dates = daily_features_gallery.keys()
     rank1_acc = {}
-    for key, items in daily_features_query.items():
-        correct = 0
-        for item in items:
-            pred_class = pred(daily_features_gallery, item)
-            if pred_class == key:
-                correct += 1
-        rank1_acc[key] = correct / len(items)
+    for date_str in dates:
+        for key, items in daily_features_query[date_str].items():
+            correct = 0
+            for item in items:
+                pred_class = pred(daily_features_gallery[date_str], item)
+                if pred_class == key:
+                    correct += 1
+            rank1_acc[date_str] = correct / len(items)
     print(rank1_acc)
-    print(np.mean(rank1_acc.values()))
+    print(np.mean(list(rank1_acc.values())))
+    print(len(rank1_acc))
 
 
 def pred(gallery_dict, feature):
