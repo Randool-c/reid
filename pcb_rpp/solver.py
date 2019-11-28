@@ -620,41 +620,57 @@ def evaluate_daily():
     daily_features_query = {}
     for i, classname in enumerate(gallery_classnames):
         date_str = classname[:10]
-        if date_str not in daily_features_gallery or classname not in daily_features_gallery[date_str]:
+        if date_str not in daily_features_gallery:
             daily_features_gallery[date_str] = {classname: [feature_gallery[i]]}
+        elif classname not in daily_features_gallery[date_str]:
+            daily_features_gallery[date_str][classname] = [feature_gallery[i]]
         else:
             daily_features_gallery[date_str][classname].append(feature_gallery[i])
+    print('hello world', daily_features_gallery['2019-08-15'].keys())
     for i, classname in enumerate(query_classnames):
         date_str = classname[:10]
-        if date_str not in daily_features_query or classname not in daily_features_query[date_str]:
+        if date_str not in daily_features_query:
             daily_features_query[date_str] = {classname: [feature_query[i]]}
+        elif classname not in daily_features_query[date_str]:
+            daily_features_query[date_str][classname] = [feature_query[i]]
         else:
             daily_features_query[date_str][classname].append(feature_query[i])
 
-    print(daily_features_query.keys())
+    # print(daily_features_query.keys())
     dates = daily_features_gallery.keys()
     rank1_acc = {}
+
+    score_foreach_query = {}
     for date_str in dates:
-        for key, items in daily_features_query[date_str].items():
+        score_foreach_query[date_str] = {}
+        for classname, items in daily_features_query[date_str].items():
             correct = 0
+            score_foreach_query[date_str][classname] = []
             for item in items:
-                pred_class = pred(daily_features_gallery[date_str], item)
-                if pred_class == key:
+                pred_class, gallery_scores = pred(daily_features_gallery[date_str], item)
+                score_foreach_query[date_str][classname].append(gallery_scores)
+                if pred_class == classname:
                     correct += 1
-            rank1_acc[date_str] = correct / len(items)
+            rank1_acc[classname] = correct / len(items)
     print(rank1_acc)
     print(np.mean(list(rank1_acc.values())))
     print(len(rank1_acc))
+    with open('score_foreach_query.json', 'w') as f:
+        json.dump(score_foreach_query, f, indent=4)
 
 
 def pred(gallery_dict, feature):
     max_score = -1
     predclass = None
 
+    gallery_scores = {}
+    print(gallery_dict.keys())
+
     for k, g_features in gallery_dict.items():
         score = g_features @ feature
-        score = score.max()
+        score = score.max().astype(float)
+        gallery_scores[k] = score
         if score > max_score:
             max_score = score
             predclass = k
-    return predclass
+    return predclass, gallery_scores
